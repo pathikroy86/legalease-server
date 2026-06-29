@@ -35,6 +35,7 @@ const database = client.db(process.env.DB_NAME || "legalease");
 const lawyersCollection = database.collection("lawyers");
 const hiresCollection = database.collection("hires");
 const commentsCollection = database.collection("comments");
+const userProfilesCollection = database.collection("userProfiles");
 
 // lawyer related apis
 app.get('/api/lawyers', async (req, res) => {
@@ -130,7 +131,62 @@ app.post('/api/lawyers', async (req, res) => {
     res.send(result);
 })
 
+// user profile related apis
+app.get('/api/user-profile', async (req, res) => {
+    const query = {};
+
+    if (req.query.email) {
+        query.email = req.query.email;
+    }
+
+    if (!query.email) {
+        return res.status(400).send({ message: 'Email is required' })
+    }
+
+    const result = await userProfilesCollection.findOne(query);
+    res.send(result || {});
+})
+
+app.patch('/api/user-profile', async (req, res) => {
+    const profile = req.body;
+
+    if (!profile?.email || !profile?.name) {
+        return res.status(400).send({ message: 'Email and name are required' })
+    }
+
+    const filter = { email: profile.email };
+    const updatedDoc = {
+        $set: {
+            name: profile.name,
+            image: profile.image || '',
+            email: profile.email,
+            updatedAt: new Date()
+        },
+        $setOnInsert: {
+            createdAt: new Date()
+        }
+    }
+    const result = await userProfilesCollection.updateOne(filter, updatedDoc, { upsert: true });
+    res.send(result);
+})
+
 // hire related apis
+app.get('/api/hires', async (req, res) => {
+    const query = {};
+
+    if (req.query.clientEmail) {
+        query.clientEmail = req.query.clientEmail;
+    }
+
+    if (req.query.lawyerEmail) {
+        query.lawyerEmail = req.query.lawyerEmail;
+    }
+
+    const cursor = hiresCollection.find(query).sort({ hiredAt: -1 });
+    const result = await cursor.toArray();
+    res.send(result);
+})
+
 app.post('/api/hires', async (req, res) => {
     const hire = req.body;
 
@@ -159,6 +215,10 @@ app.get('/api/comments', async (req, res) => {
         query.lawyerId = req.query.lawyerId;
     }
 
+    if (req.query.userEmail) {
+        query.userEmail = req.query.userEmail;
+    }
+
     const cursor = commentsCollection.find(query).sort({ commentedAt: -1 });
     const result = await cursor.toArray();
     res.send(result);
@@ -180,6 +240,27 @@ app.post('/api/comments', async (req, res) => {
     }
 
     const result = await commentsCollection.insertOne(newComment);
+    res.send(result);
+})
+
+app.patch('/api/comments/:id', async (req, res) => {
+    const id = req.params.id;
+    const commentInfo = req.body;
+    const filter = { _id: new ObjectId(id) };
+    const updatedDoc = {
+        $set: {
+            comment: commentInfo.comment,
+            updatedAt: new Date()
+        }
+    }
+    const result = await commentsCollection.updateOne(filter, updatedDoc);
+    res.send(result);
+})
+
+app.delete('/api/comments/:id', async (req, res) => {
+    const id = req.params.id;
+    const query = { _id: new ObjectId(id) };
+    const result = await commentsCollection.deleteOne(query);
     res.send(result);
 })
 
