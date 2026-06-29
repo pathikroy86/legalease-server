@@ -17,6 +17,7 @@ app.get('/', (req, res) => {
 })
 
 const uri = process.env.MONGODB_URI;
+let connectPromise;
 
 const client = new MongoClient(uri, {
     serverApi: {
@@ -27,9 +28,17 @@ const client = new MongoClient(uri, {
     serverSelectionTimeoutMS: 10000,
 });
 
-client.connect(() => {
-    console.log('connecting to MOngo db');
-}).catch(console.dir)
+const connectDB = async () => {
+    if (!uri) {
+        throw new Error('MONGODB_URI is not defined')
+    }
+
+    if (!connectPromise) {
+        connectPromise = client.connect();
+    }
+
+    return connectPromise;
+}
 
 const database = client.db(process.env.DB_NAME || "legalease");
 const lawyersCollection = database.collection("lawyers");
@@ -37,6 +46,28 @@ const hiresCollection = database.collection("hires");
 const commentsCollection = database.collection("comments");
 const userProfilesCollection = database.collection("userProfiles");
 const authUsersCollection = database.collection("user");
+
+app.use('/api', async (req, res, next) => {
+    try {
+        await connectDB();
+        next();
+    } catch (err) {
+        console.error(err);
+        res.status(500).send({
+            message: 'Database connection failed',
+            error: err.code || err.message
+        })
+    }
+})
+
+app.get('/api/health', async (req, res) => {
+    const ping = await database.command({ ping: 1 });
+    res.send({
+        message: 'Database connected',
+        database: process.env.DB_NAME || 'legalease',
+        ok: ping.ok
+    })
+})
 
 // lawyer related apis
 app.get('/api/lawyers', async (req, res) => {
@@ -413,7 +444,11 @@ app.delete('/api/comments/:id', async (req, res) => {
     res.send(result);
 })
 
-app.listen(port, () => {
-    console.log(`Example app listening on port ${port}`)
-})
+if (!process.env.VERCEL) {
+    app.listen(port, () => {
+        console.log(`Example app listening on port ${port}`)
+    })
+}
+
+module.exports = app;
 
