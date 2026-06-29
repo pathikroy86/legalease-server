@@ -71,14 +71,27 @@ app.get('/api/health', async (req, res) => {
 
 // lawyer related apis
 app.get('/api/lawyers', async (req, res) => {
-    const query = {};
+    const query = {
+        $or: [
+            { approvalStatus: 'approved' },
+            { approvalStatus: { $exists: false } }
+        ]
+    };
 
     if (req.query.search) {
-        query.$or = [
-            { name: { $regex: req.query.search, $options: 'i' } },
-            { specialization: { $regex: req.query.search, $options: 'i' } },
-            { city: { $regex: req.query.search, $options: 'i' } }
+        query.$and = [
+            {
+                $or: query.$or
+            },
+            {
+                $or: [
+                    { name: { $regex: req.query.search, $options: 'i' } },
+                    { specialization: { $regex: req.query.search, $options: 'i' } },
+                    { city: { $regex: req.query.search, $options: 'i' } }
+                ]
+            }
         ]
+        delete query.$or;
     }
 
     if (req.query.specialization && req.query.specialization !== 'all') {
@@ -103,8 +116,50 @@ app.get('/api/lawyers', async (req, res) => {
     res.send(result);
 })
 
+app.get('/api/admin/lawyers', async (req, res) => {
+    const query = {};
+
+    if (req.query.approvalStatus && req.query.approvalStatus !== 'all') {
+        query.approvalStatus = req.query.approvalStatus;
+    }
+
+    const cursor = lawyersCollection.find(query).sort({ registeredAt: -1 });
+    const result = await cursor.toArray();
+    res.send(result);
+})
+
+app.patch('/api/admin/lawyers/:id', async (req, res) => {
+    const id = req.params.id;
+    const lawyerInfo = req.body;
+
+    if (!lawyerInfo?.approvalStatus) {
+        return res.status(400).send({ message: 'Approval status is required' })
+    }
+
+    const query = ObjectId.isValid(id)
+        ? { _id: new ObjectId(id) }
+        : { email: id };
+    const updatedDoc = {
+        $set: {
+            approvalStatus: lawyerInfo.approvalStatus,
+            approvedAt: lawyerInfo.approvalStatus === 'approved' ? new Date() : null,
+            reviewedAt: new Date()
+        }
+    }
+    const result = await lawyersCollection.updateOne(query, updatedDoc);
+    res.send(result);
+})
+
 app.get('/api/lawyers/featured', async (req, res) => {
     const lawyers = await lawyersCollection.aggregate([
+        {
+            $match: {
+                $or: [
+                    { approvalStatus: 'approved' },
+                    { approvalStatus: { $exists: false } }
+                ]
+            }
+        },
         { $sample: { size: 6 } },
         {
             $project: {
@@ -116,6 +171,7 @@ app.get('/api/lawyers/featured', async (req, res) => {
                 consultationFee: 1,
                 status: 1,
                 city: 1,
+                approvalStatus: 1,
                 registeredAt: 1,
                 registeredDate: 1,
                 registeredTime: 1
@@ -127,6 +183,27 @@ app.get('/api/lawyers/featured', async (req, res) => {
 })
 
 app.get('/api/lawyers/:id', async (req, res) => {
+    const id = req.params.id;
+    const query = ObjectId.isValid(id)
+        ? {
+            _id: new ObjectId(id),
+            $or: [
+                { approvalStatus: 'approved' },
+                { approvalStatus: { $exists: false } }
+            ]
+        }
+        : {
+            email: id,
+            $or: [
+                { approvalStatus: 'approved' },
+                { approvalStatus: { $exists: false } }
+            ]
+        };
+    const result = await lawyersCollection.findOne(query);
+    res.send(result || {});
+})
+
+app.get('/api/admin/lawyers/:id', async (req, res) => {
     const id = req.params.id;
     const query = ObjectId.isValid(id)
         ? { _id: new ObjectId(id) }
@@ -154,6 +231,7 @@ app.post('/api/lawyers', async (req, res) => {
         consultationFee: Number(lawyer.consultationFee),
         status: lawyer.status,
         city: lawyer.city,
+        approvalStatus: 'pending',
         registeredAt,
         registeredDate: registeredAt.toISOString().split('T')[0],
         registeredTime: registeredAt.toTimeString().split(' ')[0],
@@ -179,6 +257,7 @@ app.patch('/api/lawyers/:id', async (req, res) => {
             photoUrl: lawyer.photoUrl,
             status: lawyer.status || 'Available',
             city: lawyer.city || '',
+            approvalStatus: lawyer.approvalStatus || 'pending',
             updatedAt: new Date()
         }
     }
@@ -340,6 +419,10 @@ app.get('/api/admin/analytics', async (req, res) => {
 app.get('/api/hires', async (req, res) => {
     const query = {};
 
+    if (req.query.lawyerId) {
+        query.lawyerId = req.query.lawyerId;
+    }
+
     if (req.query.clientEmail) {
         query.clientEmail = req.query.clientEmail;
     }
@@ -407,8 +490,21 @@ app.get('/api/comments', async (req, res) => {
 app.post('/api/comments', async (req, res) => {
     const comment = req.body;
 
-    if (!comment?.lawyerId || !comment?.userEmail || !comment?.comment) {
+    if (!comment?.lawyerId || !comment?.lawyerEmail || !comment?.userEmail || !comment?.comment) {
         return res.status(400).send({ message: 'Lawyer, user, and comment are required' })
+    }
+
+    const hireQuery = {
+        clientEmail: comment.userEmail,
+        $or: [
+            { lawyerId: comment.lawyerId },
+            { lawyerEmail: comment.lawyerEmail }
+        ]
+    }
+    const hiredLawyer = await hiresCollection.findOne(hireQuery);
+
+    if (!hiredLawyer) {
+        return res.status(403).send({ message: 'Only users who have hired this lawyer can comment.' })
     }
 
     const commentedAt = new Date();
