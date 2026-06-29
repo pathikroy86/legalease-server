@@ -131,6 +131,37 @@ app.post('/api/lawyers', async (req, res) => {
     res.send(result);
 })
 
+
+app.patch('/api/lawyers/:id', async (req, res) => {
+    const id = req.params.id;
+    const lawyer = req.body;
+    const filter = ObjectId.isValid(id)
+        ? { _id: new ObjectId(id) }
+        : { email: id };
+    const updatedDoc = {
+        $set: {
+            name: lawyer.name,
+            bio: lawyer.bio,
+            consultationFee: Number(lawyer.consultationFee),
+            specialization: lawyer.specialization,
+            photoUrl: lawyer.photoUrl,
+            status: lawyer.status || 'Available',
+            city: lawyer.city || '',
+            updatedAt: new Date()
+        }
+    }
+    const result = await lawyersCollection.updateOne(filter, updatedDoc);
+    res.send(result);
+})
+
+app.delete('/api/lawyers/:id', async (req, res) => {
+    const id = req.params.id;
+    const query = ObjectId.isValid(id)
+        ? { _id: new ObjectId(id) }
+        : { email: id };
+    const result = await lawyersCollection.deleteOne(query);
+    res.send(result);
+})
 // user profile related apis
 app.get('/api/user-profile', async (req, res) => {
     const query = {};
@@ -207,6 +238,20 @@ app.post('/api/hires', async (req, res) => {
     res.send(result);
 })
 
+
+app.patch('/api/hires/:id', async (req, res) => {
+    const id = req.params.id;
+    const hireInfo = req.body;
+    const filter = { _id: new ObjectId(id) };
+    const updatedDoc = {
+        $set: {
+            status: hireInfo.status,
+            updatedAt: new Date()
+        }
+    }
+    const result = await hiresCollection.updateOne(filter, updatedDoc);
+    res.send(result);
+})
 // comment related apis
 app.get('/api/comments', async (req, res) => {
     const query = {};
@@ -267,3 +312,4 @@ app.delete('/api/comments/:id', async (req, res) => {
 app.listen(port, () => {
     console.log(`Example app listening on port ${port}`)
 })
+
