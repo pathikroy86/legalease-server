@@ -36,6 +36,7 @@ const lawyersCollection = database.collection("lawyers");
 const hiresCollection = database.collection("hires");
 const commentsCollection = database.collection("comments");
 const userProfilesCollection = database.collection("userProfiles");
+const authUsersCollection = database.collection("user");
 
 // lawyer related apis
 app.get('/api/lawyers', async (req, res) => {
@@ -198,7 +199,110 @@ app.patch('/api/user-profile', async (req, res) => {
         }
     }
     const result = await userProfilesCollection.updateOne(filter, updatedDoc, { upsert: true });
+    await authUsersCollection.updateOne(
+        { email: profile.email },
+        {
+            $set: {
+                name: profile.name,
+                image: profile.image || '',
+                updatedAt: new Date()
+            }
+        }
+    );
     res.send(result);
+})
+
+// admin related apis
+app.get('/api/admin/users', async (req, res) => {
+    const authUsers = await authUsersCollection.find().sort({ createdAt: -1 }).toArray();
+    const profiles = await userProfilesCollection.find().toArray();
+    const profileMap = new Map(profiles.map((profile) => [profile.email, profile]));
+
+    const users = authUsers.map((user) => {
+        const profile = profileMap.get(user.email) || {};
+
+        return {
+            _id: user._id,
+            id: user.id || user._id,
+            name: profile.name || user.name || user.email?.split('@')[0] || 'LegalEase User',
+            email: user.email,
+            role: user.role || profile.role || 'user',
+            image: profile.image || user.image || '',
+            createdAt: user.createdAt || profile.createdAt || '',
+        }
+    })
+
+    res.send(users);
+})
+
+app.patch('/api/admin/users/:id', async (req, res) => {
+    const id = req.params.id;
+    const userInfo = req.body;
+
+    if (!userInfo?.role) {
+        return res.status(400).send({ message: 'Role is required' })
+    }
+
+    const query = ObjectId.isValid(id)
+        ? { $or: [{ _id: new ObjectId(id) }, { id }, { email: id }] }
+        : { $or: [{ id }, { email: id }] };
+
+    const updatedDoc = {
+        $set: {
+            role: userInfo.role,
+            updatedAt: new Date()
+        }
+    }
+
+    const result = await authUsersCollection.updateOne(query, updatedDoc);
+
+    if (userInfo.email) {
+        await userProfilesCollection.updateOne(
+            { email: userInfo.email },
+            {
+                $set: {
+                    role: userInfo.role,
+                    email: userInfo.email,
+                    updatedAt: new Date()
+                },
+                $setOnInsert: {
+                    createdAt: new Date()
+                }
+            },
+            { upsert: true }
+        );
+    }
+
+    res.send(result);
+})
+
+app.delete('/api/admin/users/:id', async (req, res) => {
+    const id = req.params.id;
+    const email = req.query.email;
+    const query = ObjectId.isValid(id)
+        ? { $or: [{ _id: new ObjectId(id) }, { id }, { email: id }] }
+        : { $or: [{ id }, { email: id }] };
+
+    const result = await authUsersCollection.deleteOne(query);
+
+    if (email) {
+        await userProfilesCollection.deleteOne({ email });
+        await lawyersCollection.deleteOne({ email });
+    }
+
+    res.send(result);
+})
+
+app.get('/api/admin/analytics', async (req, res) => {
+    const totalUsers = await authUsersCollection.countDocuments();
+    const totalLawyers = await lawyersCollection.countDocuments();
+    const totalHires = await hiresCollection.countDocuments();
+
+    res.send({
+        totalUsers,
+        totalLawyers,
+        totalHires
+    });
 })
 
 // hire related apis
